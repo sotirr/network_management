@@ -1,6 +1,7 @@
 """Variant 1."""
 from abc import ABC, abstractmethod
 import fcntl
+import functools
 import struct
 import socket
 from typing import Any, Type
@@ -50,11 +51,11 @@ class Command(ABC):
         pass
 
 
-class GetIntFieldValueCommand(Command):
+class NormalizeIntFieldValueCommand(Command):
     """Abstract class for generating report field value classes."""
 
     @abstractmethod
-    def __init__(self, ifname: str) -> None:
+    def __init__(self, raw_data: bytes) -> None:
         """Initiate variables.
 
         Args:
@@ -70,26 +71,73 @@ class GetIntFieldValueCommand(Command):
         """
 
 
-class GetInterfaceParamViaIoctl(Command):
-    """Get interface param via ioctl."""
+class GetIntFieldValueCommand(Command):
+    """Abstract class for generating report field value classes."""
 
-    def __init__(self, ifname: str, flag: int) -> None:
-        """Init variables."""
-        self.ifname = ifname
-        self.flag = flag
+    @abstractmethod
+    def __init__(self, ifname: str) -> None:
+        """Initiate variables.
 
-        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.arg = struct.pack('256s', bytes(self.ifname, 'utf-8'))
-        super().__init__()
+        Args:
+            ifname: Network interface name.
+        """
 
-    def execute(self) -> bytes:
+    @abstractmethod
+    def execute(self) -> str:
         """Run command.
 
         Returns:
-            bytes: raw ioctl output
+            str: report_value
+        """
+
+
+class GetIntFieldValueViaIoctlCommand(Command):
+    """Abstract class for generating report field value classes."""
+
+    @abstractmethod
+    def __init__(
+        self, ifname: str, ioctl_comand_flag: int, normalize_command: Type[NormalizeIntFieldValueCommand]
+    ) -> None:
+        """Initiate variables.
+
+        Args:
+            ifname              : Network interface name.
+            ioctl_comand_flag   : flag for ioctl request
+            normalize_command:  : comand for normalize output to str
+        """
+
+    @abstractmethod
+    def execute(self) -> str:
+        """Run command.
+
+        Returns:
+            str: report_value
+        """
+
+
+class GetInterfaceParamViaIoctl(GetIntFieldValueViaIoctlCommand):
+    """Get interface param value over ioctl."""
+
+    def __init__(
+        self, ifname: str, ioctl_comand_flag: int, normalize_command: Type[NormalizeIntFieldValueCommand]
+    ) -> None:
+        """Init variables."""
+        self.ifname = ifname
+        self.flag = ioctl_comand_flag
+        self.normalize_command = normalize_command
+
+        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.arg = struct.pack('256s', bytes(self.ifname, 'utf-8'))
+
+    def execute(self) -> str:
+        """Run command.
+
+        Returns:
+            str: interface value in string format
         """
         output_hex: bytes = fcntl.ioctl(self.s.fileno(), self.flag, self.arg)
-        return output_hex
+        output_noralized: str = self.normalize_command(output_hex).execute()
+        return output_noralized
 
 
 class CheckInterfaceFlagCommand(Command):
@@ -106,75 +154,65 @@ class CheckInterfaceFlagCommand(Command):
         return bool(flags_int & self.checked_flag)
 
 
-class GetInterfaceStatusCommand(GetIntFieldValueCommand):
-    """Get intreface status."""
+class NormalizeInterfaceStatusCommand(GetIntFieldValueCommand):
+    """Normalize intreface status to str."""
 
-    flag = SIOCGIFFLAGS
-    ioctl_command = GetInterfaceParamViaIoctl
+    checked_flag = IFF_UP
     flag_checker_command = CheckInterfaceFlagCommand
 
-    def __init__(self, ifname: str) -> None:
+    def __init__(self, data_hex: bytes) -> None:
         """Init variables."""
-        self.ifname = ifname
+        self.data_hex = data_hex
 
     def execute(self) -> str:
         """Run command."""
-        flags_hex = self.ioctl_command(self.ifname, self.flag).execute()[16:18]
+        flags_hex = self.data_hex[16:18]
         is_flag_set = self.flag_checker_command(flags_hex, IFF_UP).execute()
         return 'up' if is_flag_set else 'down'
 
 
-class GetInterfaceIpAddressCommand(GetIntFieldValueCommand):
-    """Get interface ip address."""
+class NormalizeInterfaceIpAddressViaIoctlCommand(NormalizeIntFieldValueCommand):
+    """Normalize interface ip address via ioctl."""
 
-    flag = SIOCGIFADDR
-    ioctl_command = GetInterfaceParamViaIoctl
-
-    def __init__(self, ifname: str) -> None:
+    def __init__(self, data_hex: bytes) -> None:
         """Init variables."""
-        self.ifname = ifname
+        self.data_hex = data_hex
 
     def execute(self) -> str:
         """Run command."""
-        ip_raw: bytes = self.ioctl_command(self.ifname, self.flag).execute()[20:24]
+        ip_raw: bytes = self.data_hex[20:24]
         return socket.inet_ntoa(ip_raw)
 
 
-class GetInterfacPrefixCommand(GetIntFieldValueCommand):
-    """Get interface network prefix."""
+class NormalizeInterfacPrefixViaIoctCommand(NormalizeIntFieldValueCommand):
+    """Normalize interface network prefix."""
 
-    flag = SIOCGIFNETMASK
-    ioctl_command = GetInterfaceParamViaIoctl
-
-    def __init__(self, ifname: str) -> None:
+    def __init__(self, data_hex: bytes) -> None:
         """Init variables."""
-        self.ifname = ifname
+        self.data_hex = data_hex
 
     def execute(self) -> str:
         """Run command."""
-        mask_hex = self.ioctl_command(self.ifname, self.flag).execute()[20:24]
+        mask_hex = self.data_hex[20:24]
         return socket.inet_ntoa(mask_hex)
 
 
-class GetInterfaceMacAddressCommand(GetIntFieldValueCommand):
-    """Get mac-address in xx.xx.xx.xx.xx.xx format."""
+class NormalizeInterfaceMacAddressViaIoctCommand(NormalizeIntFieldValueCommand):
+    """Normalize mac-address in xx.xx.xx.xx.xx.xx format."""
 
-    flag = SIOCGIFHWADDR
-    ioctl_command = GetInterfaceParamViaIoctl
-
-    def __init__(self, ifname: str) -> None:
+    def __init__(self, data_hex: bytes) -> None:
         """Init variables."""
-        self.ifname = ifname
+        self.data_hex = data_hex
 
     def execute(self) -> str:
         """Run command."""
-        maс_hex = self.ioctl_command(self.ifname, self.flag).execute()[18:24]
+        maс_hex = self.data_hex[18:24]
         mac = '.'.join(['%02x' % char for char in bytearray(maс_hex)])
         return mac
 
 
 class GetInterfaceNameCommand(GetIntFieldValueCommand):
-    """Get interface name."""
+    """Generate interface name."""
 
     def __init__(self, ifname: str) -> None:
         """Init variables."""
@@ -187,10 +225,26 @@ class GetInterfaceNameCommand(GetIntFieldValueCommand):
 
 INTERFACE_REPORT_FIELDS_FABRIC: dict[str, Type[GetIntFieldValueCommand]] = {
     'name': GetInterfaceNameCommand,
-    'status': GetInterfaceStatusCommand,
-    'ip': GetInterfaceIpAddressCommand,
-    'netmask': GetInterfacPrefixCommand,
-    'mac': GetInterfaceMacAddressCommand,
+    'status': functools.partial(
+        GetInterfaceParamViaIoctl,
+        ioctl_comand_flag=SIOCGIFFLAGS,
+        normalize_command=NormalizeInterfaceStatusCommand,
+    ),
+    'ip': functools.partial(
+        GetInterfaceParamViaIoctl,
+        ioctl_comand_flag=SIOCGIFADDR,
+        normalize_command=NormalizeInterfaceIpAddressViaIoctlCommand,
+    ),
+    'netmask': functools.partial(
+        GetInterfaceParamViaIoctl,
+        ioctl_comand_flag=SIOCGIFNETMASK,
+        normalize_command=NormalizeInterfacPrefixViaIoctCommand,
+    ),
+    'mac': functools.partial(
+        GetInterfaceParamViaIoctl,
+        ioctl_comand_flag=SIOCGIFHWADDR,
+        normalize_command=NormalizeInterfaceMacAddressViaIoctCommand,
+    ),
 }
 
 
