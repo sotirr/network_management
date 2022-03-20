@@ -1,5 +1,7 @@
 # network_management
 
+Генерирует отчет о параметрах сетевого интерфейса.
+
 ## Example
 
 ```python
